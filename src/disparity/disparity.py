@@ -1,13 +1,12 @@
 from collections import defaultdict
 import os
 from PIL import Image
-from ..pipeline import utils
+from ..utils import get_image_paths_paired, get_info
 import cv2
 from tqdm.notebook import tqdm
 import itertools
 import numpy as np
 import plotly.graph_objs as go
-import matplotlib.pyplot as plt
 
 def compute_disparity(left_gray, right_gray):
     window_size = 5
@@ -33,15 +32,17 @@ def compute_disparity(left_gray, right_gray):
     return disparity
 
 def compute_disparities_per_label(rectified_images_source, stop=None):
-    pairs = utils.get_image_paths_paired(rectified_images_source)
+    pairs = get_image_paths_paired(rectified_images_source)
 
     if stop is None:
         stop = len(pairs)
     
     disparities_per_label = defaultdict(list)
 
-    for base_id, (left_path, right_path) in tqdm(np.random.shuffle[[*pairs.items()]][:stop], desc="Computing disparity maps", unit="pair"):
-        label = utils.get_info(left_path)['label']
+    items = [*pairs.items()]
+    np.random.shuffle(items)
+    for base_id, (left_path, right_path) in tqdm(items[:stop], desc="Computing disparity maps", unit="pair"):
+        label = get_info(left_path)['label']
         # Load grayscale images
         imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
         imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
@@ -50,20 +51,22 @@ def compute_disparities_per_label(rectified_images_source, stop=None):
         disparity = compute_disparity(imgL, imgR) # H x W // 1000 x 1000
 
         disparities_per_label[label].append(disparity)
+        
+    return disparities_per_label
     
 
 def disparity_depth_estimation(rectified_images_source, disparity_output, path_to_calibration_data, stop=1, visualise_hist=True):
     # calib_data = np.load(path_to_calibration_data)
     # Q = calib_data["Q"]
 
-    pairs = utils.get_image_paths_paired(rectified_images_source)
+    pairs = get_image_paths_paired(rectified_images_source)
     if stop is None:
         stop = len(pairs)
     
     disparity_imgs = {}
 
     for base_id, (left_path, right_path) in tqdm([*pairs.items()][:stop], desc="Computing disparity maps", unit="pair"):
-        label = utils.get_info(left_path)['label']
+        label = get_info(left_path)['label']
         # Load grayscale images
         imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
         imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
@@ -192,7 +195,7 @@ def compute_left_right_consistency_error(disp_left, disp_right):
     return np.mean(np.abs(disp_left[valid] - disp_right_sampled[valid]))
 
 def optimize_sgbm_params_from_dir(rectified_images_source):
-    pairs = utils.get_image_paths_paired(rectified_images_source)
+    pairs = get_image_paths_paired(rectified_images_source)
 
     # Only use the first pair
     first_key = next(iter(pairs))
