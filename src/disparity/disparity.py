@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 from PIL import Image
 from ..pipeline import utils
@@ -12,7 +13,7 @@ def compute_disparity(left_gray, right_gray):
     window_size = 5
     min_disp = 0
     nDispFactor = 8
-    num_disp = 16*nDispFactor - min_disp
+    num_disp = 16*(nDispFactor - min_disp)
 
     stereo = cv2.StereoSGBM_create(
         minDisparity=min_disp,
@@ -23,13 +24,33 @@ def compute_disparity(left_gray, right_gray):
         disp12MaxDiff=1,
         uniquenessRatio=5,
         speckleWindowSize=0,
-        speckleRange=1,
+        speckleRange=2,
         preFilterCap = 63,
         mode=cv2.STEREO_SGBM_MODE_HH
     )
     
     disparity = stereo.compute(left_gray, right_gray).astype(np.float32) / 16.0
     return disparity
+
+def compute_disparities_per_label(rectified_images_source, stop=None):
+    pairs = utils.get_image_paths_paired(rectified_images_source)
+
+    if stop is None:
+        stop = len(pairs)
+    
+    disparities_per_label = defaultdict(list)
+
+    for base_id, (left_path, right_path) in tqdm(np.random.shuffle[[*pairs.items()]][:stop], desc="Computing disparity maps", unit="pair"):
+        label = utils.get_info(left_path)['label']
+        # Load grayscale images
+        imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
+        imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
+
+        # Compute disparity
+        disparity = compute_disparity(imgL, imgR) # H x W // 1000 x 1000
+
+        disparities_per_label[label].append(disparity)
+    
 
 def disparity_depth_estimation(rectified_images_source, disparity_output, path_to_calibration_data, stop=1, visualise_hist=True):
     # calib_data = np.load(path_to_calibration_data)
@@ -66,17 +87,17 @@ def disparity_depth_estimation(rectified_images_source, disparity_output, path_t
         # Convert arrays to PIL in mode "L"
 
         # Optional: Histogram
-        if visualise_hist:
-            plt.figure(figsize=(4, 3))
-            plt.hist(disparity.ravel(), bins=50, range=(np.min(disparity), np.max(disparity)))
-            plt.title(f"Disparity Histogram - {base_id}")
-            plt.xlabel("Disparity")
-            plt.ylabel("Frequency")
-            plt.grid(True)
-            plt.tight_layout()
-            hist_path = os.path.join(disparity_output, f"{base_id}_hist.png")
-            plt.savefig(hist_path)
-            plt.close()
+        # if visualise_hist:
+        #     plt.figure(figsize=(4, 3))
+        #     plt.hist(disparity.ravel(), bins=50, range=(np.min(disparity), np.max(disparity)))
+        #     plt.title(f"Disparity Histogram - {base_id}")
+        #     plt.xlabel("Disparity")
+        #     plt.ylabel("Frequency")
+        #     plt.grid(True)
+        #     plt.tight_layout()
+        #     hist_path = os.path.join(disparity_output, f"{base_id}_hist.png")
+        #     plt.savefig(hist_path)
+        #     plt.close()
         
         pilL  = Image.fromarray(imgL,  mode="L")
         pilD  = Image.fromarray(disp_vis, mode="L")
@@ -92,7 +113,7 @@ def disparity_depth_estimation(rectified_images_source, disparity_output, path_t
         combined.save(save_path)
         disparity_imgs[save_path] = pilD
 
-    return disparity_imgs
+    return disparity
 
 def get_max_profile_depth(depth_map, mask=None):
     """
@@ -152,6 +173,11 @@ def plot_3d_point_cloud(disparity, Q, max_points=100000, mask=None):
 
     fig = go.Figure(data=[scatter], layout=layout)
     fig.show()
+
+
+
+
+## Parameter optimisation stuff
 
 def compute_left_right_consistency_error(disp_left, disp_right):
     h, w = disp_left.shape
