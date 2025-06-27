@@ -1,8 +1,4 @@
 images/
-data/
-aacv/
-src/exploration/
-src/pipeline/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
