@@ -1,12 +1,14 @@
 from collections import defaultdict
+import multiprocessing
 import os
 from PIL import Image
-from ..utils import get_image_paths_paired, get_info
+from ..utils import get_file_names, get_image_paths_paired, get_info
 import cv2
 from tqdm.notebook import tqdm
 import itertools
 import numpy as np
-import plotly.graph_objs as go
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 def compute_disparity(left_gray, right_gray):
     window_size = 5
@@ -31,92 +33,127 @@ def compute_disparity(left_gray, right_gray):
     disparity = stereo.compute(left_gray, right_gray).astype(np.float32) / 16.0
     return disparity
 
-def compute_disparities_per_label(rectified_images_source, stop=None):
+def _compute_one(args):
+    left_path, right_path = args
+    info = get_info(left_path)
+    label = info['label']
+    imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
+    imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
+    disparity = compute_disparity(imgL, imgR)
+    return label, disparity
+
+def compute_disparities_per_label(rectified_images_source, output_path, stop=None, n_workers=None, normalise=True):
     pairs = get_image_paths_paired(rectified_images_source)
 
     if stop is None:
         stop = len(pairs)
-    
+
+    # shuffle & cut down to `stop`
+    items = list(pairs.values())
+    np.random.shuffle(items)
+    items = items[:stop]
+
     disparities_per_label = defaultdict(list)
 
-    items = [*pairs.items()]
-    np.random.shuffle(items)
-    for base_id, (left_path, right_path) in tqdm(items[:stop], desc="Computing disparity maps", unit="pair"):
-        label = get_info(left_path)['label']
-        # Load grayscale images
-        imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
-        imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
+    # choose pool size
+    if n_workers is None:
+        n_workers = multiprocessing.cpu_count() - 1 # leave one core free for other tasks
 
-        # Compute disparity
-        disparity = compute_disparity(imgL, imgR) # H x W // 1000 x 1000
+    with multiprocessing.Pool(processes=n_workers) as pool:
+        # imap_unordered yields (label, disparity) as they complete
+        for label, disp in tqdm(
+                pool.imap_unordered(_compute_one, items),
+                total=len(items),
+                desc="Computing disparity maps",
+                unit="pair"
+            ):
+            disparities_per_label[label].append(disp)
 
-        disparities_per_label[label].append(disparity)
-        
-    return disparities_per_label
+    normalised_disparities_per_label = defaultdict(list)
+    if normalise:
+        for label, disp_list in disparities_per_label.items():
+            n_images = len(disp_list)
+
+            # if no images for this label, zero‐length or all zeros
+            if n_images == 0:
+                normalised_disparities_per_label[label] = np.array([], dtype=float)
+                continue
+
+            # concatenate & filter out the sentinel
+            all_vals = np.concatenate([d.ravel() for d in disp_list])
+            valid   = all_vals[all_vals != -1].astype(int)
+
+            # build one bin per observed disparity value
+            if valid.size == 0:
+                # no valid pixels at all
+                hist = np.zeros(0, dtype=float)
+            else:
+                counts = np.bincount(valid)           # counts[i] = total pixels==i across all images
+                # divide by number of images, not number of pixels
+                hist = counts / n_images              # hist[i] = avg. pixels per image with value i
+
+            normalised_disparities_per_label[label] = hist
+    
+    # Save the disparities to a file
+    np.savez(os.path.join(output_path, "disparities_per_label.npz"), **disparities_per_label)
+    np.savez(os.path.join(output_path, "normalised_disparities_per_label.npz"), **normalised_disparities_per_label)
+
+
+    return disparities_per_label, normalised_disparities_per_label
     
 
-def disparity_depth_estimation(rectified_images_source, disparity_output, path_to_calibration_data, stop=1, visualise_hist=True):
-    # calib_data = np.load(path_to_calibration_data)
-    # Q = calib_data["Q"]
-
+def disparity_depth_estimation(rectified_images_source, stop=None, mask=None):
     pairs = get_image_paths_paired(rectified_images_source)
     if stop is None:
         stop = len(pairs)
-    
-    disparity_imgs = {}
 
-    for base_id, (left_path, right_path) in tqdm([*pairs.items()][:stop], desc="Computing disparity maps", unit="pair"):
+    for base_id, (left_path, right_path) in tqdm(list(pairs.items())[:stop],
+                                               desc="Computing disparity maps",
+                                               unit="pair"):
         label = get_info(left_path)['label']
-        # Load grayscale images
+
         imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
         imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
-
-        # Compute disparity
         disparity = compute_disparity(imgL, imgR)
-        print("Disparity stats:")
-        print("\tmin:", np.min(disparity))
-        print("\tmax:", np.max(disparity))
-        print("\tmean:", np.mean(disparity))
-        # Normalize disparity to 0–255 for display
-        disp_vis = cv2.normalize(disparity, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-        disp_vis = disp_vis.astype(np.uint8)
-        # points3D = cv2.reprojectImageTo3D(disparity.astype(np.float32), Q)
-        # depth_map = points3D[:, :, 2]   # Z axis = depth
-        # Plot point cloud of estimated depth
-        #plot_3d_point_cloud(disparity=disparity, Q=Q)
-        # maximum depth estimation
-        #max_profile_depth = get_max_profile_depth(depth_map)
-        #print(max_profile_depth)
-        # Convert arrays to PIL in mode "L"
 
-        # Optional: Histogram
-        # if visualise_hist:
-        #     plt.figure(figsize=(4, 3))
-        #     plt.hist(disparity.ravel(), bins=50, range=(np.min(disparity), np.max(disparity)))
-        #     plt.title(f"Disparity Histogram - {base_id}")
-        #     plt.xlabel("Disparity")
-        #     plt.ylabel("Frequency")
-        #     plt.grid(True)
-        #     plt.tight_layout()
-        #     hist_path = os.path.join(disparity_output, f"{base_id}_hist.png")
-        #     plt.savefig(hist_path)
-        #     plt.close()
-        
-        pilL  = Image.fromarray(imgL,  mode="L")
-        pilD  = Image.fromarray(disp_vis, mode="L")
-        pilR  = Image.fromarray(imgR,  mode="L")
-        # Create a new grayscale canvas and paste side by side
-        w, h = pilL.width, pilL.height
-        combined = Image.new("L", (w * 3, h))
-        combined.paste(pilL, (0,   0))
-        combined.paste(pilD, (w,   0))
-        combined.paste(pilR, (w*2, 0))
-        # Save result
-        save_path = os.path.join(disparity_output, f"{base_id}_disparity.png")
-        combined.save(save_path)
-        disparity_imgs[save_path] = pilD
+        # Apply mask
+        if mask is None:
+            disp_masked = np.where(disparity != -1, disparity, np.nan)
+        else:
+            disp_masked = np.where(((disparity >= mask[1]) | (disparity < mask[0])), np.nan, disparity)
+            disp_masked = np.where(disparity != -1, disp_masked, np.nan)
 
-    return disparity
+        # Convert grayscale images to RGB for Plotly
+        imgL_rgb = np.stack([imgL]*3, axis=-1)
+        imgR_rgb = np.stack([imgR]*3, axis=-1)
+
+        # Plot with Plotly
+        fig = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=['Left', 'Disparity', 'Right'],
+            horizontal_spacing=0.02,
+            specs=[[{"type": "image"}, {"type": "heatmap"}, {"type": "image"}]]
+        )
+
+        fig.add_trace(go.Image(z=imgL_rgb), row=1, col=1)
+        fig.add_trace(go.Heatmap(
+            z=disp_masked,
+            colorscale='Gray',
+            colorbar=dict(title='Disparity (px)', lenmode='fraction', len=0.8),
+            showscale=True
+        ), row=1, col=2)
+        fig.add_trace(go.Image(z=imgR_rgb), row=1, col=3)
+
+        fig.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+
+        fig.update_layout(
+            title_text=f"{base_id}  —  label: {label}",
+            width=900, height=300,
+            margin=dict(t=50, l=10, r=10, b=10)
+        )
+
+        fig.show()
+
 
 def get_max_profile_depth(depth_map, mask=None):
     """
@@ -291,3 +328,27 @@ def optimize_sgbm_params(imgL, imgR):
     print("Best parameters found:")
     print(best_params)
     return best_params
+
+
+###################################
+
+def canny_edge_detection(image_dir, threshholds=(100, 200), stop=None):
+    img_paths = get_file_names(image_dir, stop=stop)
+
+    for img_path in tqdm(img_paths, desc="Canny Edge Detection", unit=" image"):
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        edges = cv2.Canny(img, threshholds[0], threshholds[1])
+
+        # Convert edges to RGB so Plotly can render it
+        edges_rgb = np.stack([edges]*3, axis=-1)  # shape: H x W x 3
+
+        # Plot with Plotly
+        fig = go.Figure()
+        fig.add_trace(go.Image(z=edges_rgb))
+        fig.update_layout(
+            title=f"Canny Edges for {os.path.basename(img_path)}",
+            width=800, height=600,
+            margin=dict(t=50, l=10, r=10, b=10)
+        )
+        fig.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+        fig.show()
