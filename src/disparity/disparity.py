@@ -146,6 +146,8 @@ def disparity_depth_estimation(rectified_images_source, stop=None, mask=None):
 
         fig.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
 
+        fig.update_yaxes(autorange='reversed', row=1, col=2)
+
         fig.update_layout(
             title_text=f"{base_id}  —  label: {label}",
             width=900, height=300,
