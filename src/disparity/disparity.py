@@ -10,6 +10,66 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+colour = "#cac8c8"  # light grey
+theme_dict = {
+    "template": {
+        "layout": {
+            "font": {"family": "Arial, sans-serif", "size": 32, "color": "black"},
+            "title": {"font": {"size": 32, "color": "black"}, "x": 0.0},
+            "paper_bgcolor": "white",
+            "plot_bgcolor": "white",
+            # Make default discrete colors the same subtle grey so PX won't assign
+            # a contrasting fill color. Repeat entries for multiple categories if needed.
+            "colorway": [colour] * 8,
+            "margin": {"l": 60, "r": 20, "t": 42, "b": 36},
+            "legend": {"bgcolor": "rgba(0,0,0,0)", "bordercolor": "rgba(0,0,0,0)", "borderwidth": 0, "font": {"size": 32}},
+            "xaxis": {
+                "title": {"standoff": 6, "font": {"size": 32}},
+                "tickfont": {"size": 32},
+                "showgrid": False,
+                "zeroline": False,
+                "linecolor": "black",
+                "linewidth": 0.6,
+                "mirror": True,
+                "ticks": "outside",
+            },
+            "yaxis": {
+                "title": {"standoff": 6, "font": {"size": 32}},
+                "tickfont": {"size": 32},
+                "showgrid": False,
+                "gridcolor": "#e9e9e9",
+                "gridwidth": 0.5,
+                "zeroline": False,
+                "linecolor": "black",
+                "linewidth": 0.6,
+                "mirror": True,
+                "ticks": "outside",
+            },
+            "uniformtext": {"mode": "hide", "minsize": 32},
+            "annotationdefaults": {"font": {"size": 32, "color": "black"}},
+            "hovermode": "closest",
+            "barmode": "group",
+        },
+        "data": {
+            "bar": [
+                {
+                    # explicit fill color (light grey) + thin black outline
+                    "marker": {"color": colour, "line": {"color": "black", "width": 0.8}},
+                    # text settings:
+                    "textfont": {"size": 32, "color": "black"},        # outside text
+                    "insidetextfont": {"size": 32, "color": "black"},  # inside text
+                    # Ensure automatic placement still uses 'auto' but color is forced black
+                    "textposition": "auto",
+                    # optional default numeric format:
+                    "texttemplate": "%{y:.0f}",
+                    "opacity": 1.0,
+                }
+            ]
+        },
+    }
+}
+
+
 def compute_disparity(left_gray, right_gray):
     window_size = 5
     min_disp = 0
@@ -155,6 +215,61 @@ def disparity_depth_estimation(rectified_images_source, stop=None, mask=None):
         )
 
         fig.show()
+
+def disparity_depth_estimation_paper(rectified_images_source, stop=None, mask=None, legend_width_px=240):
+    pairs = get_image_paths_paired(rectified_images_source)
+    if stop is None:
+        stop = len(pairs)
+
+    for base_id, (left_path, right_path) in tqdm(list(pairs.items())[:stop],
+                                               desc="Computing disparity maps",
+                                               unit="pair"):
+        label = get_info(left_path)['label']
+
+        imgL = cv2.imread(left_path, cv2.IMREAD_GRAYSCALE)
+        imgR = cv2.imread(right_path, cv2.IMREAD_GRAYSCALE)
+        disparity = compute_disparity(imgL, imgR)
+
+        # Apply mask
+        if mask is None:
+            disp_masked = np.where(disparity != -1, disparity, np.nan)
+        else:
+            disp_masked = np.where(((disparity >= mask[1]) | (disparity < mask[0])), np.nan, disparity)
+            disp_masked = np.where(disparity != -1, disp_masked, np.nan)
+
+        # Convert grayscale images to RGB for Plotly
+        imgL_rgb = np.stack([imgL]*3, axis=-1)
+        imgR_rgb = np.stack([imgR]*3, axis=-1)
+        height, width = imgL.shape
+
+        # Plot left image
+        fig_img = go.Figure()
+        fig_img.add_trace(go.Image(z=imgL_rgb))
+        fig_img.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+        fig_img.update_layout(**theme_dict, width=width, height=height)
+        # Save as pdf
+        fig_img.write_image(f"Disparity-Map-Left-Image.pdf")
+        fig_img.show()
+
+        # Plot disparity heatmap
+        fig_disp = go.Figure()
+        fig_disp.add_trace(go.Heatmap(
+            z=disp_masked,
+            colorscale='Gray',
+            colorbar=dict(title='Disparity (px)', lenmode='fraction', len=0.9),
+            showscale=True
+        ))
+        fig_disp.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+        fig_disp.update_yaxes(autorange='reversed')
+        fig_disp.update_layout(
+            **theme_dict,
+            width=width + legend_width_px,
+            height=height,
+            margin=dict(l=60, r=legend_width_px, t=42, b=36)
+        )
+        # Save as pdf
+        fig_disp.write_image(f"Disparity-Map-Heat-Map.pdf")
+        fig_disp.show()
 
 
 def get_max_profile_depth(depth_map, mask=None):
@@ -354,3 +469,38 @@ def canny_edge_detection(image_dir, threshholds=(100, 200), stop=None):
         )
         fig.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
         fig.show()
+
+def canny_edge_detection_paper(image_dir, threshholds=(100, 200), stop=None):
+    img_paths = get_file_names(image_dir, stop=stop)
+
+    for img_path in tqdm(img_paths, desc="Canny Edge Detection", unit=" image"):
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        edges = cv2.Canny(img, threshholds[0], threshholds[1])
+
+        # Convert images to RGB for Plotly
+        img_rgb = np.stack([img]*3, axis=-1)
+        edges_rgb = np.stack([edges]*3, axis=-1)
+
+        # Plot original image
+        fig_img = go.Figure()
+        fig_img.add_trace(go.Image(z=img_rgb))
+        fig_img.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+        fig_img.update_layout(
+            width=img.shape[1], height=img.shape[0],
+            margin=dict(l=10, r=10, t=10, b=10)
+        )
+        # Save as pdf
+        fig_img.write_image(f"Canny-Edges-Original-Image.pdf")
+        fig_img.show()
+
+        # Plot Canny edges
+        fig_edges = go.Figure()
+        fig_edges.add_trace(go.Image(z=edges_rgb))
+        fig_edges.update_xaxes(showticklabels=False).update_yaxes(showticklabels=False)
+        fig_edges.update_layout(
+            width=img.shape[1], height=img.shape[0],
+            margin=dict(l=10, r=10, t=10, b=10)
+        )
+        # Save as pdf
+        fig_edges.write_image(f"Canny-Edges-Detected-Edges.pdf")
+        fig_edges.show()
