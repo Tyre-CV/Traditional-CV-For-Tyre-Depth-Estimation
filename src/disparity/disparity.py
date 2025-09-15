@@ -11,6 +11,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 def compute_disparity(left_gray, right_gray):
+    """
+    Computes the disparity map between two rectified grayscale stereo images using StereoSGBM.
+    Args:
+        left_gray (np.ndarray): Left rectified grayscale image.
+        right_gray (np.ndarray): Right rectified grayscale image.
+    Returns:
+        np.ndarray: Disparity map (float32, same size as input images).
+    """
     window_size = 5
     min_disp = 0
     nDispFactor = 8
@@ -34,6 +42,13 @@ def compute_disparity(left_gray, right_gray):
     return disparity
 
 def _compute_one(args):
+    """
+    Helper function to compute disparity for a single pair of image paths.
+    Args:
+        args (tuple): (left_path, right_path)
+    Returns:
+        tuple: (label, disparity map)
+    """
     left_path, right_path = args
     info = get_info(left_path)
     label = info['label']
@@ -43,6 +58,17 @@ def _compute_one(args):
     return label, disparity
 
 def compute_disparities_per_label(rectified_images_source, output_path, stop=None, n_workers=None, normalise=True):
+    """
+    Computes and saves disparity maps for all image pairs in a directory, grouped by label.
+    Args:
+        rectified_images_source (str): Path to rectified stereo image pairs.
+        output_path (str): Directory to save output .npz files.
+        stop (int, optional): Max number of pairs to process. Defaults to all.
+        n_workers (int, optional): Number of parallel workers. Defaults to CPU count - 1.
+        normalise (bool, optional): Whether to normalise disparities per label. Defaults to True.
+    Returns:
+        tuple: (disparities_per_label, normalised_disparities_per_label)
+    """
     pairs = get_image_paths_paired(rectified_images_source)
 
     if stop is None:
@@ -103,6 +129,13 @@ def compute_disparities_per_label(rectified_images_source, output_path, stop=Non
     
 
 def disparity_depth_estimation(rectified_images_source, stop=None, mask=None):
+    """
+    Computes and visualizes disparity maps for stereo pairs, optionally applying a mask.
+    Args:
+        rectified_images_source (str): Path to rectified stereo image pairs.
+        stop (int, optional): Max number of pairs to process. Defaults to all.
+        mask (tuple or None, optional): Disparity value range to mask. Defaults to None.
+    """
     pairs = get_image_paths_paired(rectified_images_source)
     if stop is None:
         stop = len(pairs)
@@ -159,7 +192,12 @@ def disparity_depth_estimation(rectified_images_source, stop=None, mask=None):
 
 def get_max_profile_depth(depth_map, mask=None):
     """
-    Computes max-min depth within mask (or entire image if mask None).
+    Computes the maximum profile depth (max-min) within a mask or the entire depth map.
+    Args:
+        depth_map (np.ndarray): Depth map.
+        mask (np.ndarray or None, optional): Boolean mask of valid pixels. Defaults to None.
+    Returns:
+        float or None: Max-min depth value, or None if no valid points.
     """
     if mask is None:
         valid = np.isfinite(depth_map) & (depth_map > 0)
@@ -172,6 +210,14 @@ def get_max_profile_depth(depth_map, mask=None):
     return float(np.max(d) - np.min(d))  # in same units as baseline/focal length (e.g. cm or mm)
 
 def plot_3d_point_cloud(disparity, Q, max_points=100000, mask=None):
+    """
+    Plots a 3D point cloud from a disparity map using a reprojection matrix Q.
+    Args:
+        disparity (np.ndarray): Disparity map.
+        Q (np.ndarray): 4x4 reprojection matrix from stereo calibration.
+        max_points (int, optional): Max number of points to plot. Defaults to 100000.
+        mask (np.ndarray or None, optional): Boolean mask for valid points. Defaults to None.
+    """
     # Reproject disparity to 3D
     points_3D = cv2.reprojectImageTo3D(disparity, Q)
     depth_map = points_3D[:, :, 2]
@@ -222,6 +268,14 @@ def plot_3d_point_cloud(disparity, Q, max_points=100000, mask=None):
 ## Parameter optimisation stuff
 
 def compute_left_right_consistency_error(disp_left, disp_right):
+    """
+    Computes the left-right consistency error between two disparity maps.
+    Args:
+        disp_left (np.ndarray): Disparity map from left image.
+        disp_right (np.ndarray): Disparity map from right image.
+    Returns:
+        float: Mean absolute consistency error, or np.inf if no valid points.
+    """
     h, w = disp_left.shape
     x, y = np.meshgrid(np.arange(w), np.arange(h))
     x_r = (x - disp_left).astype(np.int32)
@@ -234,6 +288,13 @@ def compute_left_right_consistency_error(disp_left, disp_right):
     return np.mean(np.abs(disp_left[valid] - disp_right_sampled[valid]))
 
 def optimize_sgbm_params_from_dir(rectified_images_source):
+    """
+    Optimizes SGBM parameters using the first stereo pair in a directory.
+    Args:
+        rectified_images_source (str): Path to rectified stereo image pairs.
+    Returns:
+        dict: Best parameter set found.
+    """
     pairs = get_image_paths_paired(rectified_images_source)
 
     # Only use the first pair
@@ -249,6 +310,14 @@ def optimize_sgbm_params_from_dir(rectified_images_source):
 
 
 def optimize_sgbm_params(imgL, imgR):
+    """
+    Performs grid search to optimize SGBM parameters for a given stereo pair.
+    Args:
+        imgL (np.ndarray): Left rectified grayscale image.
+        imgR (np.ndarray): Right rectified grayscale image.
+    Returns:
+        dict: Best parameter set found.
+    """
     best_score = np.inf
     best_params = None
 
@@ -335,6 +404,13 @@ def optimize_sgbm_params(imgL, imgR):
 ###################################
 
 def canny_edge_detection(image_dir, threshholds=(100, 200), stop=None):
+    """
+    Performs Canny edge detection on images in a directory and visualizes the results.
+    Args:
+        image_dir (str): Directory containing images.
+        threshholds (tuple, optional): (low, high) thresholds for Canny. Defaults to (100, 200).
+        stop (int, optional): Max number of images to process. Defaults to all.
+    """
     img_paths = get_file_names(image_dir, stop=stop)
 
     for img_path in tqdm(img_paths, desc="Canny Edge Detection", unit=" image"):

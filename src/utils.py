@@ -8,6 +8,14 @@ import cv2
 
 # Function to retrieve all file names in a directory
 def get_file_names(directory, stop=None):
+    """
+    Retrieve all PNG file names in a directory (recursively).
+    Args:
+        directory (str): Directory to search.
+        stop (int, optional): Max number of files to return. Defaults to None (all files).
+    Returns:
+        list: List of file paths.
+    """
     file_names = []
     for root, dirs, files in os.walk(directory):
         files.sort()
@@ -19,6 +27,11 @@ def get_file_names(directory, stop=None):
     return file_names
 
 def unify_label_type(directory):
+    """
+    Renames all files in a directory to unify label format in the filename.
+    Args:
+        directory (str): Directory containing files to rename.
+    """
     file_names = get_file_names(directory)
     for file_path in tqdm(file_names,
                           desc="Unifying labels",
@@ -31,6 +44,14 @@ def unify_label_type(directory):
             os.rename(file_path, new_file_path)
 
 def get_image_paths_paired(directory, stop=None):
+    """
+    Finds and pairs left/right stereo images in a directory by base id.
+    Args:
+        directory (str): Directory to search for image pairs.
+        stop (int, optional): Max number of files to process. Defaults to None (all files).
+    Returns:
+        dict: base_id -> (left_image_path, right_image_path)
+    """
     file_pairs_paths = {} # Will store tuples of (left_image_path, right_image_path) with key = base_id
     file_names = get_file_names(directory, stop)
     for file_path in tqdm(file_names,
@@ -48,6 +69,14 @@ def get_image_paths_paired(directory, stop=None):
     return file_pairs_paths
 
 def relabel_images(image_dict, new_label):
+    """
+    Relabels images in a dictionary with a new label in the filename.
+    Args:
+        image_dict (dict): Mapping of file_path to image object.
+        new_label (str): New label to use in filenames.
+    Returns:
+        dict: Mapping of new file_path to image object.
+    """
     images = {}
     for file_path, img in tqdm(image_dict.items(),
                                desc="Relabeling images",
@@ -61,16 +90,37 @@ def relabel_images(image_dict, new_label):
 
 # Function to get the filename without the directory and wihthout the extension
 def get_file_name(file_path):
+    """
+    Gets the filename without directory and extension.
+    Args:
+        file_path (str): Path to file.
+    Returns:
+        str: Filename without extension.
+    """
     base_name = os.path.basename(file_path)
     name, _ = os.path.splitext(base_name)
     return name
 
 # Function to get the directory path of the passed file (i.e. the path without the file name)
 def get_file_dir(file_path):
+    """
+    Gets the directory path of a file.
+    Args:
+        file_path (str): Path to file.
+    Returns:
+        str: Directory path.
+    """
     return os.path.dirname(file_path)
 
 # Function to get the id, side (l/r), and label of the passed file name
 def get_info(file_path):
+    """
+    Extracts id, label, and side from a file name.
+    Args:
+        file_path (str): Path to file.
+    Returns:
+        dict: Dictionary with keys 'id', 'side', 'label'.
+    """
     file_name = get_file_name(file_path)
     parts = file_name.split('_')
     if len(parts) < 3:
@@ -93,6 +143,15 @@ def get_info(file_path):
 
 # Function to load all images from passed directory
 def load_images_from_dir(directory, stop=None, batch_size=None):
+    """
+    Loads all images from a directory as PIL Images, optionally in batches.
+    Args:
+        directory (str): Directory to load images from.
+        stop (int, optional): Max number of files to load. Defaults to None (all files).
+        batch_size (int, optional): If set, yields batches of images of this size.
+    Returns:
+        dict or generator: Dictionary of file_path to image, or generator yielding batches.
+    """
     if batch_size is not None:
         assert isinstance(batch_size, int) and batch_size > 0 and batch_size % 2 == 0, \
             "batch_size must be a positive even integer."
@@ -113,6 +172,15 @@ def load_images_from_dir(directory, stop=None, batch_size=None):
         return images
     
 def load_images(file_paths, stop=None, batch_size=None):
+    """
+    Loads images from a list of file paths as PIL Images, optionally in batches.
+    Args:
+        file_paths (list): List of file paths to load.
+        stop (int, optional): Max number of files to load. Defaults to None (all files).
+        batch_size (int, optional): If set, yields batches of images of this size.
+    Returns:
+        dict or generator: Dictionary of file_path to image, or generator yielding batches.
+    """
     if batch_size is not None:
         assert isinstance(batch_size, int) and batch_size > 0 and batch_size % 2 == 0, \
             "batch_size must be a positive even integer."
@@ -136,6 +204,12 @@ def load_images(file_paths, stop=None, batch_size=None):
 
 # Function to save images to the output directory
 def save_images(images_dict, output_path):
+    """
+    Saves images to the specified output directory as PNG files.
+    Args:
+        images_dict (dict): Mapping of file_path to PIL Image.
+        output_path (str): Directory to save images to.
+    """
     os.makedirs(output_path, exist_ok=True)
     
     for file_path, img in tqdm(images_dict.items(),
@@ -146,6 +220,14 @@ def save_images(images_dict, output_path):
 
 # Function to get the size of a directory in bytes, kilobytes, megabytes, or gigabytes
 def get_dir_size(directory, unit='MB'):
+    """
+    Calculates the total size of a directory in the specified unit.
+    Args:
+        directory (str): Directory to measure.
+        unit (str, optional): Unit for size ('B', 'KB', 'MB', 'GB'). Defaults to 'MB'.
+    Returns:
+        float: Directory size in specified unit.
+    """
     units = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3}
     total_size = 0
     for dirpath, dirnames, filenames in os.walk(directory):
@@ -159,6 +241,14 @@ def get_dir_size(directory, unit='MB'):
 
 # Function to get the size of a list of files in bytes, kilobytes, megabytes, or gigabytes
 def get_size_of_files(file_paths, unit='MB'):
+    """
+    Calculates the total size of a list of files in the specified unit.
+    Args:
+        file_paths (list): List of file paths.
+        unit (str, optional): Unit for size ('B', 'KB', 'MB', 'GB'). Defaults to 'MB'.
+    Returns:
+        float: Total size in specified unit.
+    """
     units = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3}
     total_size = 0
     for file_path in file_paths:
@@ -173,6 +263,13 @@ def get_size_of_files(file_paths, unit='MB'):
 
 # Function to group stereo images by base id
 def group_stereo(images_dict):
+    """
+    Groups stereo images by base id into left/right pairs.
+    Args:
+        images_dict (dict): Mapping of file_path to image object.
+    Returns:
+        dict: base_id -> {'L': (file_path, image), 'R': (file_path, image)}
+    """
     # Returns a dict: base_id -> {'L': (file_path, image), 'R': (file_path, image)}.
     groups = defaultdict(dict)
     for fp, img in images_dict.items():
@@ -185,6 +282,14 @@ def group_stereo(images_dict):
 
 # Function to match histogram of one image to another
 def match_histogram(src_arr, ref_arr):
+    """
+    Remaps the histogram of src_arr to match that of ref_arr.
+    Args:
+        src_arr (np.ndarray): Source image array.
+        ref_arr (np.ndarray): Reference image array.
+    Returns:
+        np.ndarray: Histogram-matched array.
+    """
     # remap src_arr histogram to match ref_arr
     hist_src, _ = np.histogram(src_arr.ravel(), bins=256, range=(0,255))
     hist_ref, _ = np.histogram(ref_arr.ravel(), bins=256, range=(0,255))
@@ -204,6 +309,17 @@ def match_histogram(src_arr, ref_arr):
 
 # Function to apply erosion or dilation to a single grayscale PIL Image
 def apply_morphology_single(img, op='erode', kernel_size=3, shape='rect', iterations=1):
+    """
+    Applies erosion or dilation to a single grayscale PIL Image.
+    Args:
+        img (PIL.Image): Input image (grayscale or convertible to 'L').
+        op (str, optional): Operation ('erode' or 'dilate'). Defaults to 'erode'.
+        kernel_size (int, optional): Size of structuring element. Defaults to 3.
+        shape (str, optional): Shape of structuring element ('rect', 'ellipse', 'cross'). Defaults to 'rect'.
+        iterations (int, optional): Number of times to apply the operation. Defaults to 1.
+    Returns:
+        PIL.Image: Processed image.
+    """
     if img.mode != 'L':
         img_l = img.convert('L')
     else:
